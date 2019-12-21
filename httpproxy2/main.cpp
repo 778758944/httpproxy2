@@ -10,6 +10,7 @@
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+SSL_CTX * ctx = initialize_ctx();
 
 void sig_int(int);
 

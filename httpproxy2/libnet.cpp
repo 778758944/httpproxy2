@@ -14,7 +14,8 @@ const char PROXY_SOUR[][BUFSIZ] = {
     "https://devepmpop.zoomdev.us/index.js",
     "https://devepmpop.zoomdev.us/index.css",
     "https://marketplaceop.zoom.us/index.js",
-    "https://marketplaceop.zoom.us/index.css"
+    "https://marketplaceop.zoom.us/index.css",
+    "http://www.erji.net/image/wind/erjix.jpg",
 };
 
 const char PROXY_DEST[][BUFSIZ] = {
@@ -24,6 +25,7 @@ const char PROXY_DEST[][BUFSIZ] = {
     "http://localhost:9000/index.css",
     "http://localhost:9000/index.js",
     "http://localhost:9000/index.css",
+    "http://www.octavart.com/statics/aoshi/img/logo.jpg",
 };
 
 const char PROXY_HOST[][BUFSIZ] = {
@@ -199,9 +201,7 @@ void check_cert(SSL * ssl, char * domain) {
 }
 
 
-const char * isMatch(char * req_line, char * domain, char * protocol, char * port) {
-    int isReqLine = is_req_line(req_line);
-    if (isReqLine == 0) return NULL;
+const char * isMatch(char * req_line, char * domain, const char * protocol, char * port) {
     
     char url[URISIZE];
     char req[URISIZE];
@@ -218,7 +218,11 @@ const char * isMatch(char * req_line, char * domain, char * protocol, char * por
     *pe2 = '\0';
     *pe = '\0';
     
-    snprintf(url, URISIZE, "%s://%s:%s%s", protocol, domain, port, pe + 1);
+    if (strcmp(port, "80") == 0 || strcmp(port, "443") == 0) {
+        snprintf(url, URISIZE, "%s://%s%s", protocol, domain, pe + 1);
+    } else {
+        snprintf(url, URISIZE, "%s://%s:%s%s", protocol, domain, port, pe + 1);
+    }
     
     
     for (int i = 0; i < MAPSIZE; i++) {
@@ -487,7 +491,7 @@ void resignCertificate(X509 * cert, SSL * ssl) {
     
     EVP_PKEY_assign_RSA(certpkey, certrsa);
     
-    if ((rootFp = fopen("./myCA.pem", "r")) == NULL) {
+    if ((rootFp = fopen("/Users/wentaoxing/Documents/httpproxy/myCA.pem", "r")) == NULL) {
         oops("open rootCA.crt failed: ");
     }
     
@@ -499,7 +503,7 @@ void resignCertificate(X509 * cert, SSL * ssl) {
     X509_NAME * root_subject_name = X509_get_subject_name(rootCert);
     
     // open privatekey file
-    fp = fopen("./myCA.key", "r");
+    fp = fopen("/Users/wentaoxing/Documents/httpproxy/myCA.key", "r");
     if (fp == NULL) {
         oops("fopen failed: ");
     }
@@ -612,6 +616,7 @@ int is_req_line(char * buf) {
     if (len > HTTP_METHOD_MAX_LENGTH) return 0;
     
     strncpy(method, buf, len);
+    method[len] = '\0';
     
     for (i = 0; i < HTTP_METHOD_SIZE; i++) {
         if (strcmp(method, HTTP_METHOD[i]) == 0) {

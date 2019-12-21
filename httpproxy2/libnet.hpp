@@ -33,7 +33,7 @@
 #include <openssl/x509v3.h>
 #include <pthread.h>
 #define oops(m) { perror(m); exit(-1);}
-#define MAPSIZE 6
+#define MAPSIZE 7
 #define HOSTSIZE 3
 #define HTTP_METHOD_SIZE 9
 #define URISIZE BUFSIZ * 3
@@ -42,7 +42,7 @@
 ssize_t read_line(int fd, char * buf, ssize_t n);
 int tcp_connect(const char * domain, const char * port);
 int tcp_listen(const char * domain, const char * port);
-const char * isMatch(char * req_line, char * domain, char * protocol, char * port);
+const char * isMatch(char * req_line, char * domain, const char * protocol, char * port);
 int isProxyHost(char * host);
 
 // ssl
@@ -65,5 +65,8 @@ void Pthread_cond_signal(pthread_cond_t * cond);
 void Pthread_cond_wait(pthread_cond_t * cond, pthread_mutex_t * mutex);
 void Pthread_create(pthread_t * t, const pthread_attr_t * attr,  void *(*start_routine)(void *), void * arg);
 void Pthread_detach(pthread_t t);
+
+// SSL GLOBAL VARIABLE
+extern SSL_CTX * ctx;
 
 #endif /* libproxy_hpp */
