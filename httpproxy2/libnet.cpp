@@ -117,9 +117,14 @@ int read_ssl_line(SSL * ssl, char * buf, size_t n) {
 }
 
 char * parser_req_line(char * reqLine, char * domain, char * port, char * method) {
+    printf("reqLine: %s\n", reqLine);
     char path[65535];
-    char * mes = strstr(reqLine, " ");
-    char * prs = strstr(mes + 1, " ");
+    char * mes = strchr(reqLine, ' ');
+    char * prs = strchr(mes + 1, ' ');
+    if (mes == NULL || prs == NULL) {
+        method = NULL;
+        return NULL;
+    }
     *mes = '\0';
     *prs = '\0';
     
@@ -246,11 +251,13 @@ int tcp_connect(const char * domain, const char * port) {
     hint.ai_socktype = SOCK_STREAM;
     hint.ai_flags = AI_V4MAPPED | AI_ALL;
     
-    
+    printf("dns begin host: %s, port: %s\n", domain, port);
     if ((err = getaddrinfo(domain, port, &hint, &addr)) != 0 ) {
+        printf("dns failed\n");
         gai_strerror(err);
         return -1;
     }
+    printf("dns resolved\n");
     
     for (cur = addr; cur != NULL; cur = cur->ai_next) {
         if ((connfd = socket(cur->ai_family, cur->ai_socktype, cur->ai_protocol)) < 0) continue;

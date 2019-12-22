@@ -28,7 +28,6 @@ REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * po
 
 
 void free_flink(FLink * link) {
-    printf("free flink");
     if (link->ssl != NULL) SSL_free(link->ssl);
     if (link->io != NULL) BIO_free(link->io);
     free(link);
@@ -50,6 +49,7 @@ void * handle_new_reqest(void * p) {
     
     if ((nread = read_line(connfd, buf, URISIZE - 1)) > 0) {
         reqLine = parser_req_line(buf, domain, port, method);
+        if (method == NULL) return NULL;
         free(buf);
         
         if (strcmp(method, "CONNECT") == 0) {
