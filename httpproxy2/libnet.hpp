@@ -30,6 +30,7 @@
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/asn1.h>
+#include <openssl/bn.h>
 #include <openssl/x509v3.h>
 #include <pthread.h>
 #define oops(m) { perror(m); exit(-1);}
@@ -50,7 +51,7 @@ SSL_CTX * initialize_ctx();
 void check_cert(SSL * ssl, char * domain);
 int read_ssl_line(SSL * ssl, char * buf, size_t n);
 void createCertificate(char * domain, SSL * ssl);
-void resignCertificate(X509 * cert, SSL * ssl);
+RSA * resignCertificate(X509 * cert, SSL * ssl);
 
 // http
 int http_request(const char * url);

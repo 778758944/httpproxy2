@@ -117,12 +117,15 @@ int read_ssl_line(SSL * ssl, char * buf, size_t n) {
 }
 
 char * parser_req_line(char * reqLine, char * domain, char * port, char * method) {
-    printf("reqLine: %s\n", reqLine);
     char path[65535];
+    // mes split method
     char * mes = strchr(reqLine, ' ');
+    // prs split line
     char * prs = strchr(mes + 1, ' ');
+    
+    
     if (mes == NULL || prs == NULL) {
-        method = NULL;
+        *method = '\0';
         return NULL;
     }
     *mes = '\0';
@@ -136,31 +139,34 @@ char * parser_req_line(char * reqLine, char * domain, char * port, char * method
         *cols = '\0';
         strcpy(domain, mes + 1);
         strcpy(port, cols + 1);
+        return NULL;
     } else {
+        char * newReq = (char *) calloc(1, 65635);
+        // get http | https out
         char * ds = strstr(mes + 1, "//");
         if (ds == NULL) ds = mes + 1;
         else ds += 2;
-        char * cols = strstr(ds, ":");
-        if (cols == NULL) {
-            strcpy(port, "80");
-            char * sl = strstr(ds, "/");
-            strcpy(path, sl);
-            *sl = '\0';
-            strcpy(domain, ds);
+        char * cols = strchr(ds, '/');
+        strcpy(path, cols);
+    
+        if (cols == ds) {
+            snprintf(newReq, 65635, "%s %s %s", method, ds, prs + 1);
         } else {
-            char * sl = strstr(cols, "/");
             *cols = '\0';
-            strcpy(domain, ds);
-            strcpy(path, sl);
-            *sl = '\0';
-            strcpy(port, cols + 1);
+            char * dp = strchr(ds, ':');
+            if (dp == NULL) {
+                strcpy(port, "80");
+                strcpy(domain, ds);
+            } else {
+                *dp = '\0';
+                strcpy(domain, ds);
+                strcpy(port, dp + 1);
+            }
+            
+            snprintf(newReq, 65635, "%s %s %s", method, path, prs + 1);
         }
-        
-        char * newReq = (char *) calloc(1, 65635);
-        snprintf(newReq, 65635, "%s %s %s", method, path, prs + 1);
         return newReq;
     }
-    return NULL;
 }
 
 SSL_CTX * initialize_ctx() {
@@ -247,17 +253,15 @@ int tcp_connect(const char * domain, const char * port) {
     int err;
     bzero(&hint, sizeof(hint));
     
-    hint.ai_family = AF_UNSPEC;
+    hint.ai_family = AF_INET;
     hint.ai_socktype = SOCK_STREAM;
     hint.ai_flags = AI_V4MAPPED | AI_ALL;
     
-    printf("dns begin host: %s, port: %s\n", domain, port);
     if ((err = getaddrinfo(domain, port, &hint, &addr)) != 0 ) {
-        printf("dns failed\n");
         gai_strerror(err);
         return -1;
     }
-    printf("dns resolved\n");
+
     
     for (cur = addr; cur != NULL; cur = cur->ai_next) {
         if ((connfd = socket(cur->ai_family, cur->ai_socktype, cur->ai_protocol)) < 0) continue;
@@ -476,25 +480,31 @@ void createCertificate(char * domain, SSL * ssl) {
 }
 
 
-void resignCertificate(X509 * cert, SSL * ssl) {
+RSA * resignCertificate(X509 * cert, SSL * ssl) {
     RSA * rsa, * certrsa;
     EVP_PKEY * pkey, *certpkey;
     FILE * fp;
     FILE *rootFp;
     X509 * rootCert;
+    BIGNUM *e;
+    
+    e = BN_new();
     
     
-    certrsa = RSA_generate_key(
-                               2048,   /* number of bits for the key - 2048 is a sensible value */
-                               RSA_F4, /* exponent - RSA_F4 is defined as 0x10001L */
-                               NULL,   /* callback - can be NULL if we aren't displaying progress */
-                               NULL    /* callback argument - not needed in this case */
-                               );
-    
+    certrsa = RSA_new();
     rsa = RSA_new();
     pkey = EVP_PKEY_new();
     certpkey = EVP_PKEY_new();
     rootCert = X509_new();
+    
+    BN_set_word(e, RSA_F4);
+    
+    if (RSA_generate_key_ex(certrsa, 2048, e, NULL) == 0) {
+        ERR_print_errors_fp(stdout);
+        exit(EXIT_FAILURE);
+    }
+    
+    
     
     EVP_PKEY_assign_RSA(certpkey, certrsa);
     
@@ -503,7 +513,7 @@ void resignCertificate(X509 * cert, SSL * ssl) {
     }
     
     if (PEM_read_X509(rootFp, &rootCert, NULL, NULL) == NULL) {
-        ERR_print_errors_fp(stderr);
+        ERR_print_errors_fp(stdout);
         exit(EXIT_FAILURE);
     }
     
@@ -517,7 +527,7 @@ void resignCertificate(X509 * cert, SSL * ssl) {
     
     // read private key
     if (PEM_read_RSAPrivateKey(fp, &rsa, NULL, NULL) == NULL) {
-        ERR_print_errors_fp(stderr);
+        ERR_print_errors_fp(stdout);
         exit(EXIT_FAILURE);
     }
     
@@ -528,14 +538,24 @@ void resignCertificate(X509 * cert, SSL * ssl) {
     X509_sign(cert, pkey, EVP_sha256());
     
     if (SSL_use_certificate(ssl, cert) == -1) {
-        ERR_print_errors_fp(stderr);
+        ERR_print_errors_fp(stdout);
         exit(EXIT_FAILURE);
     }
     
     if (SSL_use_PrivateKey(ssl, certpkey) <= 0) {
-        ERR_print_errors_fp(stderr);
+        ERR_print_errors_fp(stdout);
         exit(EXIT_FAILURE);
     }
+    
+    
+    fclose(rootFp);
+    fclose(fp);
+    
+    RSA_free(rsa);
+    X509_free(cert);
+    BN_free(e);
+    
+    return certrsa;
 }
 
 // pthread
@@ -594,12 +614,6 @@ void Pthread_detach(pthread_t t) {
 ssize_t parser_req_path(char * buf, ssize_t nbytes) {
     char * space, * slash;
     char reqLine[URISIZE];
-    int isReqLine;
-    
-    isReqLine = is_req_line(buf);
-    
-    
-    if (isReqLine == 0) return nbytes;
     
     space = strchr(buf, ' ');
     slash = strstr(buf, "://");

@@ -42,10 +42,7 @@ int main(int argc, char ** argv) {
     for (;;) {
         connfd = accept(listenfd, NULL, NULL);
         if (connfd == -1) continue;
-        printf("Receive new connection\n");
-        
         Pthread_mutex_lock(&mutex);
-        printf("main thread lock mutex\n");
         if (left > 0) {
             connfds[iput] = connfd;
             if (++iput >= MAXSIZE)  iput = 0;
@@ -57,9 +54,7 @@ int main(int argc, char ** argv) {
             Pthread_create(&tid, NULL, &handle_new_reqest, (void *) &fd);
             Pthread_detach(tid);
         }
-        printf("main thread unlock mutex\n");
         Pthread_mutex_unlock(&mutex);
-        printf("main thread mutex unlocked\n");
     }
     return 0;
 }

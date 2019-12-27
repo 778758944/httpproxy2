@@ -28,6 +28,7 @@ REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * po
 
 
 void free_flink(FLink * link) {
+    if (link == NULL) return;
     if (link->ssl != NULL) SSL_free(link->ssl);
     if (link->io != NULL) BIO_free(link->io);
     free(link);
@@ -46,20 +47,21 @@ void * handle_new_reqest(void * p) {
          *buf;
     
     buf = (char *) malloc(URISIZE);
-    
     if ((nread = read_line(connfd, buf, URISIZE - 1)) > 0) {
         reqLine = parser_req_line(buf, domain, port, method);
-        if (method == NULL) return NULL;
-        free(buf);
+        if (strlen(method) == 0) {
+            free(buf);
+            return NULL;
+        }
         
         if (strcmp(method, "CONNECT") == 0) {
             isHttps = 1;
             char connectRes[] = "HTTP/1.1 200 Connection Established\r\n\r\n";
-            char * readBuf = (char *) malloc(BUFSIZ * 100);
             write(connfd, connectRes, strlen(connectRes));
-            read(connfd, readBuf, BUFSIZ);
-            free(readBuf);
+            read(connfd, buf, BUFSIZ);
         }
+        
+        free(buf);
         
         if (isHttps == 0 || (isHttps == 1 && isProxyHost(domain) == 1)) {
             http_proxy(connfd, domain, port, reqLine);
@@ -136,37 +138,28 @@ void * pthread_proxy_handler(void * p) {
     Pthread_detach(pthread_self());
     for (;;) {
         Pthread_mutex_lock(&mutex);
-        printf("pthread[%d] lock mutex\n", index);
         while(iget == iput) {
-            // stop process and unlock mutex
-            printf("pthread[%d] release mutex and sleep\n", index);
             Pthread_cond_wait(&cond, &mutex);
-            printf("pthread[%d] signal\n", index);
         }
-        
+        printf("Thread[%d]: start\n", index);
         connfd = connfds[iget];
         left--;
         
         t_ptr[index].count++;
         if (++iget == MAXSIZE) iget = 0;
         Pthread_mutex_unlock(&mutex);
-        
-        printf("pthread[%d] unlock mutex to handle request\n", index);
         handle_new_reqest((void *) &connfd);
-        
-        printf("pthread[%d] prepare to lock mutex for left\n", index);
         Pthread_mutex_lock(&mutex);
-        printf("pthread[%d] lock mutex to add left\n", index);
         left++;
         Pthread_mutex_unlock(&mutex);
-        printf("pthread[%d] unlock mutex after left\n", index);
-        
+        printf("Thread[%d]: exit\n", index);
     }
     return NULL;
 }
 
 
 void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
+    printf("connect to %s:%s\n", domain, port);
     fd_set sset, rrset;
     std::unordered_map<std::string, FLink *> fds;
     ssize_t nbytes;
@@ -179,6 +172,7 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
     
     SSL * ssl = NULL, * cssl;
     BIO * io, * cio;
+    RSA * rsa = nullptr;
     
     if (strcmp(protocol, "https") == 0) {
         // https server
@@ -202,21 +196,19 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
         BIO * cssl_bio = BIO_new(BIO_f_ssl());
         BIO_set_ssl(cssl_bio, cssl, BIO_NOCLOSE);
         BIO_push(cio, cssl_bio);
-//        BIO_free(cbio);
-//        BIO_free(cssl_bio);
         
         if (SSL_connect(cssl) < 0) {
-            ERR_print_errors_fp(stderr);
-            // freebuf
+            ERR_print_errors_fp(stdout);
             return;
         }
         
         
         X509 * cert = SSL_get_peer_certificate(cssl);
-        resignCertificate(cert, ssl);
+        rsa = resignCertificate(cert, ssl);
         
         if (SSL_accept(ssl) <= 0) {
-            ERR_print_errors_fp(stderr);
+            ERR_print_errors_fp(stdout);
+            RSA_free(rsa);
             return;
         }
         
@@ -235,8 +227,8 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
         maxfd = connfd > orifd ? connfd + 1 : orifd + 1;
     } else {
         lastLink = match_helper(reqLine, domain, port, protocol, fds);
-        if (lastLink == NULL) return;
         free(reqLine);
+        if (lastLink == NULL) return;
         status = READ_HEAD;
         
         FD_ZERO(&sset);
@@ -262,7 +254,7 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                     if (status == READ_BODY) {
                         nbytes = SSL_read(ssl, buf, URISIZE);
                     } else {
-                        nbytes = read_ssl_line(ssl, buf, URISIZE);
+                        nbytes = read_ssl_line(ssl, buf, URISIZE - 1);
                     }
                     
                     switch(SSL_get_error(ssl, (int) nbytes)) {
@@ -285,11 +277,13 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                             }
                             SSL_shutdown(ssl);
                             free(mainLink);
+                            RSA_free(rsa);
                             return;
                             break;
                             
                         default:
-                            ERR_print_errors_fp(stderr);
+                            ERR_print_errors_fp(stdout);
+                            RSA_free(rsa);
                             return;
                     }
                 } while (SSL_pending(ssl));
@@ -306,6 +300,7 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                     // freebuf
                     return;
                 } else if (nbytes == 0) {
+                    printf("disconnected %s:%s\n", domain, port);
                     for (std::pair<const std::string, FLink *> &p: fds) {
                         FLink * curLink = p.second;
                         if (curLink == NULL) break;
@@ -317,6 +312,7 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                         fds.erase(p.first);
                         free_flink(curLink);
                     }
+                    free_flink(mainLink);
                     close(connfd);
                     return;
                 } else {
@@ -358,14 +354,13 @@ FLink * match_helper(char * buf, char * domain, char * port, const char * protoc
         f_domain = (char *) malloc(256);
         f_port = (char *) malloc(10);
         char method[10],
-             url[URISIZE + 30];
+             url[URISIZE];
         
         char * s1 = strchr(buf, ' ');
         *s1 = '\0';
         char * s2 = strchr(s1 + 1, ' ') + 1;
-        snprintf(url, URISIZE + 29, "%s %s %s", buf, matchUrl, s2);
+        snprintf(url, URISIZE, "%s %s %s", buf, matchUrl, s2);
         reqLine = parser_req_line(url, f_domain, f_port, method);
-        printf("proxy reqLine: %s\n", reqLine);
     }
     
     snprintf(c_key, 299, "%s:%s", f_domain, f_port);
@@ -462,7 +457,7 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
                     break;
                     
                 default:
-                    ERR_print_errors_fp(stderr);
+                    ERR_print_errors_fp(stdout);
                     FD_CLR(link->fd, allset);
                     fds.erase(key);
                     free_flink(link);
