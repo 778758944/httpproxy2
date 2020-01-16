@@ -11,11 +11,10 @@
 const char PROXY_SOUR[][BUFSIZ] = {
     "https://devmpop.zoomdev.us/index.js",
     "https://devmpop.zoomdev.us/index.css",
-    "https://devepmpop.zoomdev.us/index.js",
-    "https://devepmpop.zoomdev.us/index.css",
     "https://marketplaceop.zoom.us/index.js",
     "https://marketplaceop.zoom.us/index.css",
     "http://www.erji.net/image/wind/erjix.jpg",
+    "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png"
 };
 
 const char PROXY_DEST[][BUFSIZ] = {
@@ -23,15 +22,17 @@ const char PROXY_DEST[][BUFSIZ] = {
     "http://localhost:9000/index.css",
     "http://localhost:9000/index.js",
     "http://localhost:9000/index.css",
-    "http://localhost:9000/index.js",
-    "http://localhost:9000/index.css",
     "http://www.octavart.com/statics/aoshi/img/logo.jpg",
+    "http://www.octavart.com/statics/aoshi/img/logo.jpg"
 };
 
 const char PROXY_HOST[][BUFSIZ] = {
     "devmpop.zoomdev.us",
-    "devepmpop.zoomdev.us",
-    "marketplaceop.zoom.us"
+    "marketplaceop.zoom.us",
+    "www.apple.com",
+    "www.baidu.com",
+    "www.microsoft.com",
+    "www.google.com"
 };
 
 const char HTTP_METHOD[][HTTP_METHOD_SIZE] = {
@@ -45,6 +46,11 @@ const char HTTP_METHOD[][HTTP_METHOD_SIZE] = {
     "OPTIONS",
     "HEAD"
 };
+
+
+void sig_pipe(int signo) {
+    return;
+}
 
 
 ssize_t read_line(int fd, char * buf, ssize_t n) {
@@ -176,23 +182,25 @@ SSL_CTX * initialize_ctx() {
     SSL_library_init();
     SSL_load_error_strings();
     
-    method = SSLv23_method();
+    method = TLSv1_2_method();
     ctx = SSL_CTX_new(method);
+    
+    signal(SIGPIPE, sig_pipe);
     
     // if (SSL_CTX_use_certificate_file(ctx, "dev.mergebot.com.crt", SSL_FILETYPE_PEM) <= 0) {
     //     ERR_print_errors_fp(stderr);
     //     exit(EXIT_FAILURE);
     // }
     
-    // if (SSL_CTX_use_PrivateKey_file(ctx, "dev.mergebot.com.key", SSL_FILETYPE_PEM) <= 0) {
-    //     ERR_print_errors_fp(stderr);
-    //     exit(EXIT_FAILURE);
-    // }
+//     if (SSL_CTX_use_PrivateKey_file(ctx, "dev.mergebot.com.key", SSL_FILETYPE_PEM) <= 0) {
+//         ERR_print_errors_fp(stderr);
+//         exit(EXIT_FAILURE);
+//     }
     
-    if (SSL_CTX_load_verify_locations(ctx, "/usr/local/etc/openssl@1.1/cert.pem", NULL) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
+//    if (SSL_CTX_load_verify_locations(ctx, "/usr/local/etc/openssl@1.1/cert.pem", NULL) <= 0) {
+//        ERR_print_errors_fp(stderr);
+//        exit(EXIT_FAILURE);
+//    }
     
     return ctx;
 }
@@ -201,10 +209,10 @@ void check_cert(SSL * ssl, char * domain) {
     X509 * peer;
     char peername[256];
     
-    if (SSL_get_verify_result(ssl) != X509_V_OK) {
-        printf("certificate verify failed\n");
-        exit(-1);
-    }
+//    if (SSL_get_verify_result(ssl) != X509_V_OK) {
+//        printf("certificate verify failed\n");
+//        exit(-1);
+//    }
     
     peer = SSL_get_peer_certificate(ssl);
     X509_NAME_get_text_by_NID(X509_get_subject_name(peer), NID_commonName, peername, 256);
@@ -362,7 +370,7 @@ int isProxyHost(char * host) {
         }
     }
     
-    return 0;
+    return 1;
 }
 
 int add_ext(X509 * cert, int nid, char * value) {

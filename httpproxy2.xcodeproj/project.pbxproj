@@ -7,11 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7FB04EEA23B1E41400E7CF10 /* libcrypto.1.1.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7FB04EE923B1E41400E7CF10 /* libcrypto.1.1.dylib */; };
-		7FB04EEC23B1E42300E7CF10 /* libssl.1.1.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7FB04EEB23B1E42300E7CF10 /* libssl.1.1.dylib */; };
 		7FE102CE239F702F00EC8595 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7FE102CD239F702F00EC8595 /* main.cpp */; };
 		7FE102D6239F706900EC8595 /* libnet.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7FE102D4239F706900EC8595 /* libnet.cpp */; };
 		7FE102DE239F7A0900EC8595 /* libproxy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7FE102DC239F7A0900EC8595 /* libproxy.cpp */; };
+		7FE8AB4B23CC431400158397 /* libcrypto.1.1.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7FB04EE923B1E41400E7CF10 /* libcrypto.1.1.dylib */; };
+		7FE8AB4C23CC432300158397 /* libssl.1.1.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7FB04EEB23B1E42300E7CF10 /* libssl.1.1.dylib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -37,6 +37,8 @@
 		7FE102DA239F754800EC8595 /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcrypto.a; path = "../../../../usr/local/Cellar/openssl@1.1/1.1.1c/lib/libcrypto.a"; sourceTree = "<group>"; };
 		7FE102DC239F7A0900EC8595 /* libproxy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = libproxy.cpp; sourceTree = "<group>"; };
 		7FE102DD239F7A0900EC8595 /* libproxy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = libproxy.hpp; sourceTree = "<group>"; };
+		7FE8AB4723CC418600158397 /* libssl.1.1.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libssl.1.1.dylib; path = "../../Downloads/music/openssl-1.1.1d/libssl.1.1.dylib"; sourceTree = "<group>"; };
+		7FE8AB4923CC41AD00158397 /* libcrypto.1.1.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libcrypto.1.1.dylib; path = "../../Downloads/music/openssl-1.1.1d/libcrypto.1.1.dylib"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,8 +46,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7FB04EEC23B1E42300E7CF10 /* libssl.1.1.dylib in Frameworks */,
-				7FB04EEA23B1E41400E7CF10 /* libcrypto.1.1.dylib in Frameworks */,
+				7FE8AB4C23CC432300158397 /* libssl.1.1.dylib in Frameworks */,
+				7FE8AB4B23CC431400158397 /* libcrypto.1.1.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,7 +86,9 @@
 		7FE102D7239F753C00EC8595 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				7FE8AB4923CC41AD00158397 /* libcrypto.1.1.dylib */,
 				7FB04EEB23B1E42300E7CF10 /* libssl.1.1.dylib */,
+				7FE8AB4723CC418600158397 /* libssl.1.1.dylib */,
 				7FB04EE923B1E41400E7CF10 /* libcrypto.1.1.dylib */,
 				7FE102DA239F754800EC8595 /* libcrypto.a */,
 				7FE102D8239F753C00EC8595 /* libssl.a */,
@@ -287,6 +291,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5DU5SP7K29;
+				HEADER_SEARCH_PATHS = "/usr/local/Cellar/openssl@1.1/1.1.1c/include";
 				"HEADER_SEARCH_PATHS[arch=*]" = "/usr/local/Cellar/openssl@1.1/1.1.1c/include";
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",

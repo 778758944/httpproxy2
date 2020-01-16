@@ -202,7 +202,6 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
             return;
         }
         
-        
         X509 * cert = SSL_get_peer_certificate(cssl);
         rsa = resignCertificate(cert, ssl);
         
@@ -233,8 +232,6 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
         
         FD_ZERO(&sset);
         FD_SET(connfd, &sset);
-        FD_SET(lastLink->fd, &sset);
-        
         FD_SET(lastLink->fd, &sset);
         maxfd = connfd > lastLink->fd ? connfd + 1 : lastLink->fd + 1;
         mainLink = new FLink(0, 0, connfd);
@@ -272,7 +269,6 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                                 } else {
                                     close(curLink->fd);
                                 }
-                                fds.erase(p.first);
                                 free_flink(curLink);
                             }
                             SSL_shutdown(ssl);
@@ -309,7 +305,6 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
                         } else {
                             close(curLink->fd);
                         }
-                        fds.erase(p.first);
                         free_flink(curLink);
                     }
                     free_flink(mainLink);
@@ -323,15 +318,27 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
             n--;
         }
         
-        if (n > 0) {
-            if (FD_ISSET(lastLink->fd, &rrset)) {
-                read_link(mainLink, lastLink, &rrset, &sset, fds);
-                n--;
-            }
-        }
+        
         
         if (n > 0) {
-            read_res(mainLink, lastLink, fds, &rrset, &sset, n);
+            if (FD_ISSET(lastLink->fd, &rrset)) {
+                if (read_link(mainLink, lastLink, &rrset, &sset, fds) <= 0) {
+                    std::string key(lastLink->key);
+                    fds.erase(key);
+                }
+                n--;
+            }
+            
+            if (n > 0) {
+                read_res(mainLink, lastLink, fds, &rrset, &sset, n);
+            }
+            
+            maxfd = 0;
+            for (std::pair<const std::string, FLink *> &p: fds) {
+                FLink * link = p.second;
+                maxfd = link->fd > maxfd ? link->fd : maxfd;
+            }
+            maxfd = maxfd + 1;
         }
     }
 }
@@ -396,9 +403,6 @@ FLink * match_helper(char * buf, char * domain, char * port, const char * protoc
             link->io = io;
             
             SSL_connect(ssl);
-            
-//            BIO_free(sbio);
-//            BIO_free(ssl_bio);
         }
         m[key] = link;
     }
@@ -417,7 +421,6 @@ FLink * match_helper(char * buf, char * domain, char * port, const char * protoc
 int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::unordered_map<std::string, FLink *> &fds) {
     int fd, nbytes, r;
     char buf[BUFSIZ];
-    std::string key(link->key);
     
     if (link->ssl == NULL) {
         fd = link->fd;
@@ -425,12 +428,10 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
         if (nbytes < 0) {
             perror("read res error:");
             FD_CLR(fd, allset);
-            fds.erase(key);
             free_flink(link);
         } else if (nbytes == 0) {
             close(fd);
             FD_CLR(fd, allset);
-            fds.erase(key);
             free_flink(link);
         } else {
             write_to_link(curLink, buf, nbytes);
@@ -450,7 +451,6 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
                 case SSL_ERROR_ZERO_RETURN:
                     SSL_shutdown(ssl);
                     FD_CLR(link->fd, allset);
-                    fds.erase(key);
                     free_flink(link);
                     r = 0;
                     return r;
@@ -459,7 +459,6 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
                 default:
                     ERR_print_errors_fp(stdout);
                     FD_CLR(link->fd, allset);
-                    fds.erase(key);
                     free_flink(link);
                     r = -1;
                     return r;
@@ -472,13 +471,21 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
 }
 
 void read_res(FLink * curLink, FLink * lastLink, std::unordered_map<std::string, FLink *> &fds, fd_set * rset, fd_set * allset, int n) {
+    std::vector<std::string> d_key;
     for (std::pair<const std::string, FLink *> &p: fds) {
         FLink * link = p.second;
         if (link == lastLink) continue;
         if (FD_ISSET(link->fd, rset)) {
-            read_link(curLink, link, rset, allset, fds);
+            if (read_link(curLink, link, rset, allset, fds) <= 0) {
+                std::string tk(link->key);
+                d_key.push_back(tk);
+            }
             if (--n == 0) break;
         }
+    }
+    
+    for (std::string &key: d_key) {
+        fds.erase(key);
     }
 }
 
@@ -514,7 +521,7 @@ REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * po
             
             if (strcmp("\r\n", buf) == 0) {
                 if (*bodySize == 0) status = DONE;
-                else status = READ_HEAD;
+                else status = READ_BODY;
             }
             write_to_link(*lastLink, buf, (int) nbytes);
         }
