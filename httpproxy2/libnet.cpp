@@ -27,12 +27,13 @@ const char PROXY_DEST[][BUFSIZ] = {
 };
 
 const char PROXY_HOST[][BUFSIZ] = {
-    "devmpop.zoomdev.us",
-    "marketplaceop.zoom.us",
-    "www.apple.com",
-    "www.baidu.com",
-    "www.microsoft.com",
-    "www.google.com"
+//    "devmpop.zoomdev.us",
+//    "marketplaceop.zoom.us",
+//    "www.apple.com",
+//    "www.baidu.com",
+//    "www.microsoft.com",
+//    "www.google.com"
+    "log.mmstat.com"
 };
 
 const char HTTP_METHOD[][HTTP_METHOD_SIZE] = {
@@ -370,7 +371,7 @@ int isProxyHost(char * host) {
         }
     }
     
-    return 1;
+    return 0;
 }
 
 int add_ext(X509 * cert, int nid, char * value) {

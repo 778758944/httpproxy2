@@ -35,7 +35,7 @@
 #include <pthread.h>
 #define oops(m) { perror(m); exit(-1);}
 #define MAPSIZE 6
-#define HOSTSIZE 6
+#define HOSTSIZE 1
 #define HTTP_METHOD_SIZE 9
 #define URISIZE BUFSIZ * 3
 #define HTTP_METHOD_MAX_LENGTH 7

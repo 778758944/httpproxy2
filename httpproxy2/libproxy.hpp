@@ -14,9 +14,11 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <sys/event.h>
 
 #define MAXTHREAD 25
 #define MAXSIZE 50
+#define QSIZE 15
 
 typedef struct {
     pthread_t tid;
@@ -30,6 +32,7 @@ typedef struct FLink {
     SSL * ssl;
     BIO * io;
     char key[300];
+    int index;
     FLink(bool _isProxy, bool _isPedding, int _fd): isProxy(_isProxy), isPedding(_isPedding), fd(_fd), ssl(NULL), io(NULL) {};
     FLink(bool _isProxy, bool _isPedding, int _fd, SSL * _ssl, BIO * _io): isProxy(_isProxy), isPedding(_isPedding), fd(_fd), ssl(_ssl), io(_io) {};
 } FLink;

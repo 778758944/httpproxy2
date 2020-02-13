@@ -22,15 +22,14 @@ void * pthread_proxy_handler(void * p);
 FLink * match_helper(char * buf, char * domain, char * port, const char * protocol, std::unordered_map<std::string, FLink *> &m);
 void free_flink(FLink * link);
 int write_to_link(FLink * link, char * buf, int size);
-void read_res(FLink * curLink, FLink * lastLink, std::unordered_map<std::string, FLink *> &fds, fd_set * rset, fd_set * allset, int n);
-int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::unordered_map<std::string, FLink *> &fds);
-REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * port, const char * protocol, fd_set * sset, FLink ** lastLink, int * maxfd, REQUEST_STATUS status, long * bodySize, std::unordered_map<std::string, FLink *> &fds);
+int read_link(FLink * curLink, FLink * link);
+REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * port, const char * protocol, std::vector<struct kevent> &ev, FLink ** lastLink, int * maxfd, REQUEST_STATUS status, long * bodySize, std::unordered_map<std::string, FLink *> &fds);
 
 
 void free_flink(FLink * link) {
     if (link == NULL) return;
-    if (link->ssl != NULL) SSL_free(link->ssl);
     if (link->io != NULL) BIO_free(link->io);
+    if (link->ssl != NULL) SSL_free(link->ssl);
     free(link);
 }
 
@@ -80,52 +79,53 @@ void make_thread(int n) {
 }
 
 void blind_proxy(const int connfd, const char * domain, const char * port, char * reqLine) {
-    int ori_fd, maxfd, ns;
-    fd_set allset, rset;
+    int ori_fd, ns;
     ssize_t nread;
     char buf[BUFSIZ];
+    struct kevent ev[2], rev[2];
+    int kq;
     
     ori_fd = tcp_connect(domain, port);
     if (ori_fd == -1) return;
     if (reqLine != NULL) write(ori_fd, reqLine, strlen(reqLine));
     free(reqLine);
     
-    FD_ZERO(&allset);
-    FD_SET(connfd, &allset);
-    FD_SET(ori_fd, &allset);
-    
-    maxfd = ori_fd > connfd ? ori_fd + 1 : connfd + 1;
+    EV_SET(&ev[0], connfd, EVFILT_READ, EV_ADD, 0, 0, 0);
+    EV_SET(&ev[1], ori_fd, EVFILT_READ, EV_ADD, 0, 0, 0);
+    kq = kqueue();
     
     for (;;) {
-        rset = allset;
-        ns = select(maxfd, &rset, NULL, NULL, NULL);
-        if (ns == -1) break;
-        
-        if (FD_ISSET(connfd, &rset)) {
-            nread = read(connfd, buf, BUFSIZ);
-            if (nread < 0) {
-                perror("read proxy conn: ");
-                break;
-            } else if (nread == 0) {
-                close(connfd);
-                close(ori_fd);
-                break;
-            } else {
-                write(ori_fd, buf, nread);
-            }
+        ns = kevent(kq, ev, 2, rev, 2, NULL);
+        if (ns == -1) {
+            perror("kevent err: ");
+            break;
         }
         
-        if (FD_ISSET(ori_fd, &rset)) {
-            nread = read(ori_fd, buf, BUFSIZ);
-            if (nread < 0) {
-                perror("read origin serv: ");
-                break;
-            } else if (nread == 0) {
-                close(ori_fd);
-                close(connfd);
-                break;
+        for (int i = 0; i < ns; i++) {
+            if (rev[i].ident == connfd) {
+                nread = read(connfd, buf, BUFSIZ);
+                if (nread < 0) {
+                    perror("read proxy conn: ");
+                    return;
+                } else if (nread == 0) {
+                    close(connfd);
+                    close(ori_fd);
+                    return;
+                } else {
+                    write(ori_fd, buf, nread);
+                }
             } else {
-                write(connfd, buf, nread);
+                nread = read(ori_fd, buf, BUFSIZ);
+                if (nread < 0) {
+                    perror("read origin serv: ");
+                    return;
+                } else if (nread == 0) {
+                    close(ori_fd);
+                    close(connfd);
+                    return;
+                } else {
+                    write(connfd, buf, nread);
+                }
             }
         }
     }
@@ -141,7 +141,7 @@ void * pthread_proxy_handler(void * p) {
         while(iget == iput) {
             Pthread_cond_wait(&cond, &mutex);
         }
-        printf("Thread[%d]: start\n", index);
+//        printf("Thread[%d]: start\n", index);
         connfd = connfds[iget];
         left--;
         
@@ -152,15 +152,14 @@ void * pthread_proxy_handler(void * p) {
         Pthread_mutex_lock(&mutex);
         left++;
         Pthread_mutex_unlock(&mutex);
-        printf("Thread[%d]: exit\n", index);
+//        printf("Thread[%d]: exit\n", index);
     }
     return NULL;
 }
 
 
 void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
-    printf("connect to %s:%s\n", domain, port);
-    fd_set sset, rrset;
+//    printf("connect to %s:%s\n", domain, port);
     std::unordered_map<std::string, FLink *> fds;
     ssize_t nbytes;
     const char * protocol = reqLine == NULL ? "https" : "http";
@@ -169,6 +168,11 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
     FLink * lastLink, * mainLink;
     REQUEST_STATUS status = DONE;
     ssize_t bodySize = 0;
+    int kq;
+    struct kevent rev[QSIZE];
+    std::vector<struct kevent> ev;
+    
+    
     
     SSL * ssl = NULL, * cssl;
     BIO * io, * cio;
@@ -183,9 +187,9 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
         BIO * ssl_bio = BIO_new(BIO_f_ssl());
         BIO_set_ssl(ssl_bio, ssl, BIO_NOCLOSE);
         BIO_push(io, ssl_bio);
-//        BIO_free(sbio);
-//        BIO_free(ssl_bio);
-        mainLink = new FLink(false, false, connfd, ssl, io);
+        mainLink = new FLink(false, false, connfd);
+        mainLink->ssl = ssl;
+        mainLink->io = io;
         
         // connect to original server
         orifd = tcp_connect(domain, port);
@@ -211,8 +215,9 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
             return;
         }
         
-        lastLink = new FLink(false, false, orifd, cssl, cio);
-        
+        lastLink = new FLink(false, false, orifd);
+        lastLink->ssl = cssl;
+        lastLink->io = cio;
         char c_key[300];
         snprintf(c_key, 299, "%s:%s", domain, port);
         std::string key(c_key);
@@ -220,125 +225,140 @@ void http_proxy(int connfd, char * domain, char * port, char * reqLine) {
         fds[key] = lastLink;
         
         
-        FD_ZERO(&sset);
-        FD_SET(connfd, &sset);
-        FD_SET(orifd, &sset);
-        maxfd = connfd > orifd ? connfd + 1 : orifd + 1;
+        // kevent initialize
+//        mainLink->index = 0;
+//        lastLink->index = 1;
+        struct kevent ev1, ev2;
+        EV_SET(&ev1, connfd, EVFILT_READ, EV_ADD, 0, 0, 0);
+        EV_SET(&ev2, orifd, EVFILT_READ, EV_ADD, 0, 0, c_key);
+        ev.push_back(ev1);
+        ev.push_back(ev2);
+        
+        if (fds[key] == NULL) {
+            printf("not have key\n");
+        }
     } else {
         lastLink = match_helper(reqLine, domain, port, protocol, fds);
         free(reqLine);
         if (lastLink == NULL) return;
+        std::string key(lastLink->key);
         status = READ_HEAD;
         
-        FD_ZERO(&sset);
-        FD_SET(connfd, &sset);
-        FD_SET(lastLink->fd, &sset);
-        maxfd = connfd > lastLink->fd ? connfd + 1 : lastLink->fd + 1;
         mainLink = new FLink(0, 0, connfd);
+        
+        struct kevent ev1, ev2;
+//        mainLink->index = 0;
+//        lastLink->index = 1;
+        fds[key] = lastLink;
+        EV_SET(&ev1, connfd, EVFILT_READ, EV_ADD, 0, 0, 0);
+        EV_SET(&ev2, lastLink->fd, EVFILT_READ, EV_ADD, 0, 0, lastLink->key);
+        ev.push_back(ev1);
+        ev.push_back(ev2);
     }
     
+    kq = kqueue();
+    
     for (;;) {
-        rrset = sset;
-        n = select(maxfd, &rrset, NULL, NULL, NULL);
+        int size = (int) ev.size();
+        n = kevent(kq, &ev[0], size, rev, QSIZE, NULL);
         if (n < 0) {
-            perror("select err: ");
+            perror("kevent err: ");
             return;
         }
         
-        if (FD_ISSET(connfd, &rrset)) {
-            if (strcmp(protocol, "https") == 0 && ssl != NULL) {
-                do {
-                    if (status == READ_BODY) {
-                        nbytes = SSL_read(ssl, buf, URISIZE);
-                    } else {
-                        nbytes = read_ssl_line(ssl, buf, URISIZE - 1);
-                    }
-                    
-                    switch(SSL_get_error(ssl, (int) nbytes)) {
-                        case SSL_ERROR_NONE:
-                            status = send_request(buf, nbytes, domain, port, protocol, &sset, &lastLink, &maxfd, status, &bodySize, fds);
-                            if (status == FAILED) return;
-                            break;
-                            
-                        case SSL_ERROR_ZERO_RETURN:
-                            for (std::pair<const std::string, FLink *> &p: fds) {
-                                FLink * curLink = p.second;
-                                if (curLink == NULL) break;
-                                if (curLink->ssl != NULL) {
-                                    SSL_shutdown(curLink->ssl);
-                                } else {
-                                    close(curLink->fd);
-                                }
-                                free_flink(curLink);
-                            }
-                            SSL_shutdown(ssl);
-                            free(mainLink);
-                            RSA_free(rsa);
-                            return;
-                            break;
-                            
-                        default:
-                            ERR_print_errors_fp(stdout);
-                            RSA_free(rsa);
-                            return;
-                    }
-                } while (SSL_pending(ssl));
-                
-            } else {
-                // http send request
-                if (status == READ_BODY) {
-                    nbytes = read(connfd, buf, URISIZE);
-                } else {
-                    nbytes = read_line(connfd, buf, URISIZE - 1);
-                }
-                if (nbytes < 0) {
-                    perror("read connfd err:");
-                    // freebuf
-                    return;
-                } else if (nbytes == 0) {
-                    printf("disconnected %s:%s\n", domain, port);
-                    for (std::pair<const std::string, FLink *> &p: fds) {
-                        FLink * curLink = p.second;
-                        if (curLink == NULL) break;
-                        if (curLink->ssl != NULL) {
-                            SSL_shutdown(curLink->ssl);
-                        } else {
-                            close(curLink->fd);
-                        }
-                        free_flink(curLink);
-                    }
-                    free_flink(mainLink);
-                    close(connfd);
-                    return;
-                } else {
-                    status = send_request(buf, nbytes, domain, port, protocol, &sset, &lastLink, &maxfd, status, &bodySize, fds);
-                    if (status == FAILED) return;
-                }
-            }
-            n--;
+        std::string key = "log.mmstat.com:443";
+        
+        if (fds[key] == NULL) {
+            printf("dedee\n");
         }
         
-        
-        
-        if (n > 0) {
-            if (FD_ISSET(lastLink->fd, &rrset)) {
-                if (read_link(mainLink, lastLink, &rrset, &sset, fds) <= 0) {
-                    std::string key(lastLink->key);
-                    fds.erase(key);
+        for (int i = 0; i < n; i++) {
+            int fid = (int) rev[i].ident;
+            if (fid == connfd) {
+                if (strcmp(protocol, "https") == 0 && ssl != NULL) {
+                    do {
+                        if (status == READ_BODY) {
+                            nbytes = SSL_read(ssl, buf, URISIZE);
+                        } else {
+                            nbytes = read_ssl_line(ssl, buf, URISIZE - 1);
+                        }
+                        
+                        switch(SSL_get_error(ssl, (int) nbytes)) {
+                            case SSL_ERROR_NONE:
+                                status = send_request(buf, nbytes, domain, port, protocol, ev, &lastLink, &maxfd, status, &bodySize, fds);
+                                if (status == FAILED) return;
+                                break;
+                                
+                            case SSL_ERROR_ZERO_RETURN:
+                                for (std::pair<const std::string, FLink *> &p: fds) {
+                                    FLink * curLink = p.second;
+                                    if (curLink == NULL) break;
+                                    if (curLink->ssl != NULL) {
+                                        SSL_shutdown(curLink->ssl);
+                                    } else {
+                                        close(curLink->fd);
+                                    }
+                                    free_flink(curLink);
+                                }
+                                SSL_shutdown(ssl);
+                                free(mainLink);
+                                RSA_free(rsa);
+                                return;
+                                break;
+                                
+                            default:
+                                ERR_print_errors_fp(stdout);
+                                RSA_free(rsa);
+                                return;
+                        }
+                    } while (SSL_pending(ssl));
+                    
+                } else {
+                    // http send request
+                    if (status == READ_BODY) {
+                        nbytes = read(connfd, buf, URISIZE);
+                    } else {
+                        nbytes = read_line(connfd, buf, URISIZE - 1);
+                    }
+                    if (nbytes < 0) {
+                        perror("read connfd err:");
+                        // freebuf
+                        return;
+                    } else if (nbytes == 0) {
+                        printf("disconnected %s:%s\n", domain, port);
+                        for (std::pair<const std::string, FLink *> &p: fds) {
+                            FLink * curLink = p.second;
+                            if (curLink == NULL) break;
+                            if (curLink->ssl != NULL) {
+                                SSL_shutdown(curLink->ssl);
+                            } else {
+                                close(curLink->fd);
+                            }
+                            free_flink(curLink);
+                        }
+                        free_flink(mainLink);
+                        close(connfd);
+                        return;
+                    } else {
+                        status = send_request(buf, nbytes, domain, port, protocol, ev, &lastLink, &maxfd, status, &bodySize, fds);
+                        if (status == FAILED) return;
+                    }
                 }
-                n--;
+            } else {
+                char * ckey = (char *) rev[i].udata;
+                std::string key(ckey);
+                FLink * link = fds[key];
+                
+                if (read_link(mainLink, link) <= 0) {
+                    fds.erase(key);
+                    printf("fd erase done\n");
+                    for (struct kevent &e: ev) {
+                        if (e.ident == rev[i].ident) {
+                            e.flags = EV_DELETE | EV_DISABLE;
+                        }
+                    }
+                }
             }
-            
-            if (n > 0) {
-                read_res(mainLink, lastLink, fds, &rrset, &sset, n);
-            }
-            
-            maxfd = 0;
-            for (std::pair<const std::string, FLink *> &p: fds) {
-                FLink * link = p.second;
-                maxfd = link->fd > maxfd ? link->fd : maxfd;
-            }
-            maxfd = maxfd + 1;
         }
     }
 }
@@ -373,7 +393,7 @@ FLink * match_helper(char * buf, char * domain, char * port, const char * protoc
     snprintf(c_key, 299, "%s:%s", f_domain, f_port);
     std::string key(c_key);
     
-    if (m.count(key) > 0) {
+    if (m.count(key) > 0 && m[key] != NULL) {
         link = m[key];
     } else {
         fd = tcp_connect(f_domain, f_port);
@@ -418,7 +438,7 @@ FLink * match_helper(char * buf, char * domain, char * port, const char * protoc
     return link;
 }
 
-int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::unordered_map<std::string, FLink *> &fds) {
+int read_link(FLink * curLink, FLink * link) {
     int fd, nbytes, r;
     char buf[BUFSIZ];
     
@@ -427,11 +447,9 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
         nbytes = (int) read(fd, buf, BUFSIZ);
         if (nbytes < 0) {
             perror("read res error:");
-            FD_CLR(fd, allset);
             free_flink(link);
         } else if (nbytes == 0) {
             close(fd);
-            FD_CLR(fd, allset);
             free_flink(link);
         } else {
             write_to_link(curLink, buf, nbytes);
@@ -450,7 +468,6 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
                     
                 case SSL_ERROR_ZERO_RETURN:
                     SSL_shutdown(ssl);
-                    FD_CLR(link->fd, allset);
                     free_flink(link);
                     r = 0;
                     return r;
@@ -458,7 +475,6 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
                     
                 default:
                     ERR_print_errors_fp(stdout);
-                    FD_CLR(link->fd, allset);
                     free_flink(link);
                     r = -1;
                     return r;
@@ -470,24 +486,6 @@ int read_link(FLink * curLink, FLink * link, fd_set *rset, fd_set *allset, std::
     return r;
 }
 
-void read_res(FLink * curLink, FLink * lastLink, std::unordered_map<std::string, FLink *> &fds, fd_set * rset, fd_set * allset, int n) {
-    std::vector<std::string> d_key;
-    for (std::pair<const std::string, FLink *> &p: fds) {
-        FLink * link = p.second;
-        if (link == lastLink) continue;
-        if (FD_ISSET(link->fd, rset)) {
-            if (read_link(curLink, link, rset, allset, fds) <= 0) {
-                std::string tk(link->key);
-                d_key.push_back(tk);
-            }
-            if (--n == 0) break;
-        }
-    }
-    
-    for (std::string &key: d_key) {
-        fds.erase(key);
-    }
-}
 
 int write_to_link(FLink * link, char * buf, int size) {
     if (link->ssl == NULL) {
@@ -497,14 +495,18 @@ int write_to_link(FLink * link, char * buf, int size) {
     }
 }
 
-REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * port, const char * protocol, fd_set * sset, FLink ** lastLink, int * maxfd, REQUEST_STATUS status, long * bodySize, std::unordered_map<std::string, FLink *> &fds) {
+REQUEST_STATUS send_request(char * buf, ssize_t nbytes, char * domain, char * port, const char * protocol, std::vector<struct kevent> &ev, FLink ** lastLink, int * maxfd, REQUEST_STATUS status, long * bodySize, std::unordered_map<std::string, FLink *> &fds) {
     if (status == DONE) {
         nbytes = parser_req_path(buf, nbytes);
         *lastLink = match_helper(buf, domain, port, protocol, fds);
         if (*lastLink == NULL) return FAILED;
-        if (!FD_ISSET((*lastLink)->fd, sset)) {
-            FD_SET((*lastLink)->fd, sset);
-            *maxfd = *maxfd > (*lastLink)->fd + 1 ? *maxfd : (*lastLink)->fd + 1;
+        std::string key((*lastLink)->key);
+        if (fds.count(key) == 0) {
+            printf("add new connection\n");
+            fds[key] = (*lastLink);
+            struct kevent nev;
+            EV_SET(&nev, (*lastLink)->fd, EVFILT_READ, EV_ADD, 0, 0, (*lastLink)->key);
+            ev.push_back(nev);
         }
         status = READ_HEAD;
     } else if (status == READ_HEAD) {
